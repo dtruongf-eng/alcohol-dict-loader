@@ -1,0 +1,11 @@
+name = "alcohol-dict-api" # Thay bằng tên Worker thật của bạn trên Web nếu khác
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+[triggers]
+crons = ["*/1 * * * *"]
+# 🟢 DÁN THÊM KHAI BÁO LIÊN KẾT D1 NÀY VÀO DƯỚI CÙNG:
+[[d1_databases]]
+binding = "DB"
+database_name = "alcohol-dictionary"
+database_id = "604da9e4-f9cf-4f50-8083-7190a006c672"
