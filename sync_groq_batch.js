@@ -19,7 +19,7 @@ const GROQ_KEYS_POOL = [
     "mistral:1QWbddMULh6YiC7S4cEGPx0TiLFGItmc",   // Worker 5
     
     // 🟢 LUỒNG 6 (Dành cho GitHub Actions): Chứa chuỗi gộp 6 Keys AI phụ của bạn ngăn cách bởi dấu phẩy
-    "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,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,cerebras:csk-yk92tjx6jx33xyx5mjx5ptcrwx2y8mcxmnj8tennej8enwwx,cerebras:csk-h2yfkfj92m6n2cm6jyxnww4t23n25p3x68j9r9we2m6ck3dv,mistral:joNOR5UVPaYAmsFoyuteg9Rlf9Yhbcq3,mistral:UeKVA06t8FB0PeFWT9RauXPZfvrG4721"
+    "gsk_KeyGroqPhụ1,gsk_KeyGroqPhụ2,cerebras:KeyCerebrasPhụ1,cerebras:KeyCerebrasPhụ2,mistral:KeyMistralPhụ1,mistral:KeyMistralPhụ2"
 ];
 
 // Tự động bốc đúng Key dựa trên số hiệu workerId
@@ -268,6 +268,7 @@ async function run() {
                         if (batchResult && typeof batchResult === 'object') {
                             const subgroup = subgroups[subgroupIndex];
                             let successInGroup = 0;
+                            const successWords = [];
                             subgroup.forEach(item => {
                                 const aiExs = batchResult[item.id] || batchResult[item.id.toString()];
                                 if (Array.isArray(aiExs) && aiExs.length > 0) {
@@ -275,6 +276,7 @@ async function run() {
                                     const escapedJsonStr = JSON.stringify(mergedExamples).replace(/'/g, "''");
                                     sqlUpdates.push(`UPDATE dictionary SET examples = '${escapedJsonStr}' WHERE id = ${item.id};`);
                                     successInGroup++;
+                                    successWords.push(item.word);
                                 }
                             });
                             console.log(`   ✓ [Worker ${workerId} - Luồng ${subgroupIndex}] Đã hoàn thành ${successInGroup}/${subgroup.length} từ.`);
@@ -294,6 +296,7 @@ async function run() {
 
                     if (batchResult && typeof batchResult === 'object') {
                         let successInGroup = 0;
+                        const successWords = [];
                         group.forEach(item => {
                             const aiExs = batchResult[item.id] || batchResult[item.id.toString()];
                             if (Array.isArray(aiExs) && aiExs.length > 0) {
@@ -301,6 +304,7 @@ async function run() {
                                 const escapedJsonStr = JSON.stringify(mergedExamples).replace(/'/g, "''");
                                 sqlUpdates.push(`UPDATE dictionary SET examples = '${escapedJsonStr}' WHERE id = ${item.id};`);
                                 successInGroup++;
+                                successWords.push(item.word);
                             }
                         });
                         console.log(`   ✓ [Worker ${workerId}] Đã hoàn thành ${successInGroup}/${group.length} từ.`);
