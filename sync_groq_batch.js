@@ -2,20 +2,31 @@
 import fs from 'fs';
 import { execSync } from 'child_process';
 
+// ====================================================
+// ĐỌC THAM SỐ ĐẦU VÀO TỪ TERMINAL ĐỂ ĐIỀU PHỐI TIẾN TRÌNH
+// ====================================================
 const args = process.argv.slice(2);
 const workerArg = args.find(a => a.startsWith('--worker='));
-const workerId = workerArg ? parseInt(workerArg.split('=')[1]) : 0;
+const workerId = workerArg ? parseInt(workerArg.split('=')[1]) : 0; // Số hiệu tiến trình (0 đến 6)
 
-// 🔑 DANH SÁCH 10 API KEYS
+// 🔑 DANH SÁCH CÁC API KEYS CỦA BẠN TRÊN CODESPACES
 const GROQ_KEYS_POOL = [
-    "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", // Cấp cho luồng --worker=0
-    "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", // Cấp cho luồng --worker=1
+    "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", // Worker 0
+    "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", // Worker 1
+    "cerebras:csk-wnrp46hpvftpk96re59tr49krhnxmh49k3yvd9chte4423cx", // Worker 2
+    "cerebras:csk-2vxkv68rrmn56vrwtjxd68wk2y2pc25xv9ppvnmchfnvc8mr", // Worker 3
+    "mistral:LLRqw6qYbuza5IMeC6dnkuWOCuvWzPpA",   // Worker 4
+    "mistral:1QWbddMULh6YiC7S4cEGPx0TiLFGItmc",   // Worker 5
+    
+    // 🟢 LUỒNG 6 (Dành cho GitHub Actions): Chứa chuỗi gộp 6 Keys AI phụ của bạn ngăn cách bởi dấu phẩy
+    "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,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,cerebras:csk-yk92tjx6jx33xyx5mjx5ptcrwx2y8mcxmnj8tennej8enwwx,cerebras:csk-h2yfkfj92m6n2cm6jyxnww4t23n25p3x68j9r9we2m6ck3dv,mistral:joNOR5UVPaYAmsFoyuteg9Rlf9Yhbcq3,mistral:UeKVA06t8FB0PeFWT9RauXPZfvrG4721"
 ];
 
-const GROQ_API_KEY = GROQ_KEYS_POOL[workerId];
+// Tự động bốc đúng Key dựa trên số hiệu workerId
+const GROQ_API_KEY = process.env.GROQ_API_KEY || GROQ_KEYS_POOL[workerId];
 
-if (!GROQ_API_KEY || GROQ_API_KEY.includes("_ở_đây")) {
-    console.error(`❌ [Worker ${workerId}] Lỗi: Chưa cấu hình API Key tương ứng!`);
+if (!GROQ_API_KEY || GROQ_API_KEY.includes("Mã_Key_")) {
+    console.error(`❌ [Worker ${workerId}] Lỗi: Bạn chưa cấu hình hoặc điền thiếu API Key số [${workerId}]!`);
     process.exit(1);
 }
 
@@ -39,68 +50,141 @@ try {
     process.exit(1);
 }
 
-async function generateBatchWithGroq(wordsArray) {
-    const wordsPayload = wordsArray.map(w => ({
-        id: w.id,
-        word: w.word,
-        meaning: w.meaning || "Chưa rõ nghĩa"
-    }));
-
-    const aiPrompt = `Bạn là giáo viên tiếng Nhật. Dưới đây là danh sách các từ vựng cần đặt câu ví dụ:
+// HÀM XỬ LÝ HYBRID CHỐNG NGHẼN (Hỗ trợ định tuyến 3 luồng: Groq, Mistral, Cerebras trên Codespaces)
+async function generateBatchWithGroq(wordsArray, apiKey) {
+  const wordsPayload = wordsArray.map((w) => ({ id: w.id, word: w.word, meaning: w.meaning || "Chưa rõ nghĩa" }));
+  const aiPrompt = `Bạn là giáo viên tiếng Nhật. Dưới đây là danh sách các từ vựng cần đặt câu ví dụ:
     ${JSON.stringify(wordsPayload)}
-
-    Yêu cầu:
-    Với mỗi từ vựng, hãy đặt đúng 2 câu ví dụ tiếng Nhật ngắn gọn, tự nhiên và dịch nghĩa sang tiếng Việt.
-    BẮT BUỘC chỉ trả về duy nhất một đối tượng JSON (không bọc trong markdown, không giải thích thêm).
-    Trong đó, khóa (key) là "id" của từ vựng, và giá trị (value) là mảng chứa 2 câu ví dụ.
-    Định dạng mẫu bắt buộc bằng cấu trúc JSON:
+    Yêu cầu: Với mỗi từ vựng, hãy đặt đúng 2 câu ví dụ tiếng Nhật ngắn gọn, tự nhiên và dịch nghĩa sang tiếng Việt.
+    BẮT BUỘC chỉ trả về duy nhất một đối tượng JSON. Định dạng mẫu bắt buộc:
     {
-      "1": [
-        {"jp": "Câu ví dụ tiếng Nhật 1", "vn": "Dịch nghĩa câu 1"},
-        {"jp": "Câu ví dụ tiếng Nhật 2", "vn": "Dịch nghĩa câu 2"}
+      "id_cua_tu_vung": [
+        {"jp": "Câu ví dụ 1", "vn": "Dịch nghĩa câu 1"},
+        {"jp": "Câu ví dụ 2", "vn": "Dịch nghĩa câu 2"}
       ]
     }`;
 
-    try {
-        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${GROQ_API_KEY}`,
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                model: "qwen/qwen3-32b", 
-                messages: [{ role: "user", content: aiPrompt }],
-                temperature: 0.2,
-                response_format: { type: "json_object" }
-            })
-        });
+  // Cấu hình mặc định cho Groq
+  let apiUrl = "https://api.groq.com/openai/v1/chat/completions";
+  let modelId = "qwen/qwen3-32b";
+  let finalApiKey = apiKey;
+  let requestBody = {
+    model: modelId,
+    messages: [{ role: "user", content: aiPrompt }],
+    temperature: 0.2,
+    response_format: { type: "json_object" }
+  };
 
-        if (response.status === 429) {
-            const errJson = await response.json().catch(() => ({}));
-            const errMsg = errJson.error?.message || "";
-            const match = errMsg.match(/try again in ([\d\.]+)s/i);
-            const waitSeconds = match ? parseFloat(match[1]) + 2 : 25;
-            
-            console.log(`\n   ⚠ [Worker ${workerId}] Chạm giới hạn TPM. Tạm nghỉ ${waitSeconds} giây...`);
-            await new Promise(r => setTimeout(r, waitSeconds * 1000));
-            return generateBatchWithGroq(wordsArray);
+  // 1. NẾU LÀ KEY MISTRAL AI (mistral:) -> ĐỊNH TUYẾN SANG MÁY CHỦ MISTRAL (mistral-small-latest)
+  if (apiKey.startsWith("mistral:")) {
+    apiUrl = "https://api.mistral.ai/v1/chat/completions";
+    modelId = "mistral-small-latest";
+    finalApiKey = apiKey.replace("mistral:", "");
+    requestBody = {
+      model: modelId,
+      messages: [{ role: "user", content: aiPrompt }],
+      temperature: 0.2,
+      response_format: { type: "json_object" }
+    };
+  } 
+  // 2. NẾU LÀ KEY CỦA CEREBRAS (cerebras:) -> ĐỊNH TUYẾN SANG CEREBRAS (zai-glm-4.7)
+  else if (apiKey.startsWith("cerebras:")) {
+    apiUrl = "https://api.cerebras.ai/v1/chat/completions";
+    modelId = "zai-glm-4.7"; 
+    finalApiKey = apiKey.replace("cerebras:", "");
+    requestBody = {
+      model: modelId,
+      messages: [{ role: "user", content: aiPrompt }],
+      temperature: 0.2,
+      response_format: { type: "json_object" }
+    };
+  }
+  // 3. NẾU LÀ KEY CỦA GROQ (gsk_) -> ĐỊNH TUYẾN SANG MÁY CHỦ GROQ NHƯ CŨ
+  else if (apiKey.startsWith("gsk_")) {
+    apiUrl = "https://api.groq.com/openai/v1/chat/completions";
+    modelId = "qwen/qwen3-32b";
+    requestBody = {
+      model: modelId,
+      messages: [{ role: "user", content: aiPrompt }],
+      temperature: 0.2,
+      response_format: { type: "json_object" }
+    };
+  }
+
+  // KỸ THUẬT CHỐNG NGHẼN: TIMEOUT ABORT CONTROLLER 15 GIÂY AN TOÀN CHO HỆ THỐNG
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000); 
+
+  try {
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${finalApiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId); 
+
+    // TỰ ĐỘNG BẮT LỖI 429 RATE LIMIT VÀ ĐỢI RECURSIVE RETRY
+    if (response.status === 429) {
+      const errJson = await response.json().catch(() => ({}));
+      const errMsg = errJson.error?.message || "";
+      
+      let waitSeconds = 25; 
+      
+      const retryHeader = response.headers.get("retry-after");
+      if (retryHeader) {
+        waitSeconds = parseInt(retryHeader, 10) + 2;
+      } else {
+        const minSecMatch = errMsg.match(/try again in (\d+)m([\d\.]+)s/i);
+        if (minSecMatch) {
+          const minutes = parseInt(minSecMatch[1], 10);
+          const seconds = parseFloat(minSecMatch[2]);
+          waitSeconds = minutes * 60 + seconds + 2; 
+        } else {
+          const secMatch = errMsg.match(/try again in ([\d\.]+)s/i);
+          if (secMatch) {
+            waitSeconds = parseFloat(secMatch[1]) + 2;
+          }
         }
+      }
 
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
-        const data = await response.json();
-        let responseText = data.choices?.[0]?.message?.content?.trim() || "";
-        responseText = responseText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-
-        const jsonStart = responseText.indexOf('{');
-        const jsonEnd = responseText.lastIndexOf('}');
-        if (jsonStart === -1 || jsonEnd === -1) return null;
-        return JSON.parse(responseText.substring(jsonStart, jsonEnd + 1));
-    } catch (e) {
-        console.log(`   ✗ [Worker ${workerId}] Sự cố kết nối API: ${e.message}`);
-        return null;
+      console.log(`\n   ⚠ [Worker ${workerId}] Chạm giới hạn Rate Limit của mô hình ${modelId}.`);
+      console.log(`   ⏳ Tự động tạm dừng trong ${Math.round(waitSeconds)} giây để phục hồi tài nguyên...`);
+      
+      await new Promise(r => setTimeout(r, waitSeconds * 1000));
+      
+      console.log(`   🔄 Đang tự động gọi đệ quy thử lại mẻ từ vựng này...`);
+      return generateBatchWithGroq(wordsArray, apiKey); 
     }
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error(`❌ [API Error] Model ${modelId} lỗi ${response.status}: ${errText}`);
+      return null;
+    }
+    const data = await response.json();
+    let responseText = data.choices?.[0]?.message?.content?.trim() || "";
+    responseText = responseText.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+    const jsonStart = responseText.indexOf("{");
+    const jsonEnd = responseText.lastIndexOf("}");
+    if (jsonStart === -1 || jsonEnd === -1) {
+      console.error(`❌ [Format Error] Model ${modelId} sinh câu sai định dạng JSON. Phản hồi gốc:`, responseText);
+      return null;
+    }
+    return JSON.parse(responseText.substring(jsonStart, jsonEnd + 1));
+  } catch (e) {
+    clearTimeout(timeoutId); 
+    if (e.name === "AbortError") {
+      console.error(`❌ [Timeout Error] Model ${modelId} phản hồi quá lâu (trên 15s). Đã chủ động ngắt để bảo vệ luồng chính.`);
+    } else {
+      console.error(`❌ [Network Error] Kết nối tới ${modelId} thất bại:`, e.message);
+    }
+    return null;
+  }
 }
 
 async function run() {
@@ -109,11 +193,9 @@ async function run() {
     console.log(`📊 Số lượng từ cần xử lý: ${todoIds.length}`);
 
     while (todoIds.length > 0) {
-        // Lấy ra mẻ ID hiện tại
         const currentBatchIds = todoIds.slice(0, BATCH_SIZE);
         console.log(`\n[Worker ${workerId}] Lấy dữ liệu cho mẻ gồm ${currentBatchIds.length} từ...`);
 
-        // Sử dụng câu lệnh WHERE id IN (...) cực nhanh và tối ưu chi phí D1
         const idListStr = currentBatchIds.join(',');
         const cmdQuery = `npx wrangler d1 execute ${DB_NAME} --remote --command="SELECT id, word, meaning, examples FROM dictionary WHERE id IN (${idListStr})" --json`;
         
@@ -157,29 +239,77 @@ async function run() {
             console.log(`⏳ [Worker ${workerId}] Phát hiện ${missingExamplesWords.length} từ khuyết ví dụ.`);
             const sqlUpdates = [];
 
-            for (let i = 0; i < missingExamplesWords.length; i += GROUP_SIZE) {
-                const group = missingExamplesWords.slice(i, i + GROUP_SIZE);
-                const groupWordsList = group.map(g => g.word).join(', ');
-                console.log(`👉 [Worker ${workerId}] Đang xử lý nhóm: [ ${groupWordsList} ]...`);
-                
-                const batchResult = await generateBatchWithGroq(group);
+            // 🟢 ĐOẠN KHAI THÁC SONG SONG TỰ ĐỘNG CHỐNG NGHẼN CHO LUỒNG SỐ 6 (GITHUB ACTIONS)
+            const subKeys = GROQ_API_KEY.split(",").map(k => k.trim()).filter(Boolean);
 
-                if (batchResult && typeof batchResult === 'object') {
-                    let successInGroup = 0;
-                    group.forEach(item => {
-                        const aiExs = batchResult[item.id] || batchResult[item.id.toString()];
-                        if (Array.isArray(aiExs) && aiExs.length > 0) {
-                            const mergedExamples = [...item.existingExamples, ...aiExs].slice(0, TARGET_EXAMPLES);
-                            const escapedJsonStr = JSON.stringify(mergedExamples).replace(/'/g, "''");
-                            sqlUpdates.push(`UPDATE dictionary SET examples = '${escapedJsonStr}' WHERE id = ${item.id};`);
-                            successInGroup++;
+            if (subKeys.length > 1) {
+                // 👉 CHẾ ĐỘ CHẠY SONG SONG BẤT ĐỒNG BỘ CHO WORKER 6
+                const totalParallelWords = subKeys.length * GROUP_SIZE; // 6 keys x 5 từ = 30 từ mỗi mẻ
+
+                for (let i = 0; i < missingExamplesWords.length; i += totalParallelWords) {
+                    const batchWords = missingExamplesWords.slice(i, i + totalParallelWords);
+                    
+                    // Chia nhỏ mẻ 30 từ thành 6 nhóm nhỏ (mỗi nhóm 5 từ)
+                    const subgroups = [];
+                    for (let j = 0; j < batchWords.length; j += GROUP_SIZE) {
+                        subgroups.push(batchWords.slice(j, j + GROUP_SIZE));
+                    }
+
+                    console.log(`👉 [Worker ${workerId}] Đang xử lý SONG SONG ${subgroups.length} nhóm bằng ${subKeys.length} API Keys...`);
+
+                    const promises = subgroups.map((subgroup, keyIndex) => {
+                        const apiKey = subKeys[keyIndex % subKeys.length];
+                        return generateBatchWithGroq(subgroup, apiKey);
+                    });
+
+                    const results = await Promise.all(promises);
+
+                    results.forEach((batchResult, subgroupIndex) => {
+                        if (batchResult && typeof batchResult === 'object') {
+                            const subgroup = subgroups[subgroupIndex];
+                            let successInGroup = 0;
+                            subgroup.forEach(item => {
+                                const aiExs = batchResult[item.id] || batchResult[item.id.toString()];
+                                if (Array.isArray(aiExs) && aiExs.length > 0) {
+                                    const mergedExamples = [...item.existingExamples, ...aiExs].slice(0, TARGET_EXAMPLES);
+                                    const escapedJsonStr = JSON.stringify(mergedExamples).replace(/'/g, "''");
+                                    sqlUpdates.push(`UPDATE dictionary SET examples = '${escapedJsonStr}' WHERE id = ${item.id};`);
+                                    successInGroup++;
+                                }
+                            });
+                            console.log(`   ✓ [Worker ${workerId} - Luồng ${subgroupIndex}] Đã hoàn thành ${successInGroup}/${subgroup.length} từ.`);
                         }
                     });
-                    console.log(`   ✓ [Worker ${workerId}] Đã hoàn thành ${successInGroup}/${group.length} từ.`);
+
+                    await new Promise(r => setTimeout(r, 1800)); // Giãn cách thông lượng chống nghẽn
                 }
-                await new Promise(r => setTimeout(r, 1800));
+            } else {
+                // 👉 CHẾ ĐỘ CHẠY TUẦN TỰ TIÊU CHUẨN (CHO CÁC WORKER 0 ĐẾN 5 TRÊN CODESPACES)
+                for (let i = 0; i < missingExamplesWords.length; i += GROUP_SIZE) {
+                    const group = missingExamplesWords.slice(i, i + GROUP_SIZE);
+                    const groupWordsList = group.map(g => g.word).join(', ');
+                    console.log(`👉 [Worker ${workerId}] Đang xử lý nhóm tuần tự: [ ${groupWordsList} ]...`);
+                    
+                    const batchResult = await generateBatchWithGroq(group, GROQ_API_KEY);
+
+                    if (batchResult && typeof batchResult === 'object') {
+                        let successInGroup = 0;
+                        group.forEach(item => {
+                            const aiExs = batchResult[item.id] || batchResult[item.id.toString()];
+                            if (Array.isArray(aiExs) && aiExs.length > 0) {
+                                const mergedExamples = [...item.existingExamples, ...aiExs].slice(0, TARGET_EXAMPLES);
+                                const escapedJsonStr = JSON.stringify(mergedExamples).replace(/'/g, "''");
+                                sqlUpdates.push(`UPDATE dictionary SET examples = '${escapedJsonStr}' WHERE id = ${item.id};`);
+                                successInGroup++;
+                            }
+                        });
+                        console.log(`   ✓ [Worker ${workerId}] Đã hoàn thành ${successInGroup}/${group.length} từ.`);
+                    }
+                    await new Promise(r => setTimeout(r, 1800));
+                }
             }
 
+            // Ghi hàng loạt SQL vào D1
             const tempFileName = `./temp_groq_${workerId}.sql`;
             if (sqlUpdates.length > 0) {
                 fs.writeFileSync(tempFileName, sqlUpdates.join('\n'));
@@ -195,8 +325,7 @@ async function run() {
             }
         }
 
-        // Cập nhật tiến độ: Loại bỏ các ID đã xử lý ra khỏi mảng cục bộ và lưu lại file
-        todoIds = todoIds.filter(id => !currentBatchIds.includes(id));
+        todoIds = todoIds.length > 0 ? todoIds.filter(id => !currentBatchIds.includes(id)) : [];
         fs.writeFileSync(TODO_FILE, JSON.stringify(todoIds, null, 2));
 
         await new Promise(r => setTimeout(r, 500));

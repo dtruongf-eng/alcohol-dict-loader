@@ -9,3 +9,6 @@ crons = ["*/1 * * * *"]
 binding = "DB"
 database_name = "alcohol-dictionary"
 database_id = "604da9e4-f9cf-4f50-8083-7190a006c672"
+# 🟢 DÁN THÊM KHAI BÁO KÍCH HOẠT DỊCH VỤ AI NÀY VÀO DƯỚI CÙNG:
+[ai]
+binding = "AI"

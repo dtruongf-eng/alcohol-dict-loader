@@ -3,7 +3,7 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 
 const DB_NAME = "alcohol-dictionary";
-const TOTAL_WORKERS = 2;
+const TOTAL_WORKERS = 7;
 
 async function run() {
     console.log("🔍 Đang truy vấn danh sách ID chẵn cần bổ sung ví dụ từ D1...");
