@@ -9,7 +9,7 @@ const args = process.argv.slice(2);
 const workerArg = args.find(a => a.startsWith('--worker='));
 const workerId = workerArg ? parseInt(workerArg.split('=')[1]) : 0; // Số hiệu tiến trình (0 đến 6)
 
-// 🔑 DANH SÁCH CÁC API KEYS CỦA BẠN TRÊN CODESPACES
+// 🔑 DANH SÁCH CÁC API KEYS CỦA BẠN TRÊN CODESPACES (Đã giữ nguyên vẹn các Keys của bạn)
 const GROQ_KEYS_POOL = [
     "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", // Worker 0
     "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", // Worker 1
@@ -18,7 +18,7 @@ const GROQ_KEYS_POOL = [
     "mistral:LLRqw6qYbuza5IMeC6dnkuWOCuvWzPpA",   // Worker 4
     "mistral:1QWbddMULh6YiC7S4cEGPx0TiLFGItmc",   // Worker 5
     
-    // 🟢 LUỒNG 6 (Dành cho GitHub Actions): Chứa chuỗi gộp 6 Keys AI phụ của bạn ngăn cách bởi dấu phẩy
+    // Luồng 6 (Dành cho GitHub Actions): Chứa chuỗi gộp 6 Keys AI phụ của bạn ngăn cách bởi dấu phẩy
     "gsk_KeyGroqPhụ1,gsk_KeyGroqPhụ2,cerebras:KeyCerebrasPhụ1,cerebras:KeyCerebrasPhụ2,mistral:KeyMistralPhụ1,mistral:KeyMistralPhụ2"
 ];
 
@@ -204,7 +204,7 @@ async function run() {
             output = execSync(cmdQuery).toString();
         } catch (err) {
             console.error(`❌ [Worker ${workerId}] Lỗi truy vấn D1:`, err.message);
-            await new Promise(r => setTimeout(r, 5000));
+            await new Promise(r => setTimeout(r, 500));
             continue;
         }
 
@@ -239,17 +239,15 @@ async function run() {
             console.log(`⏳ [Worker ${workerId}] Phát hiện ${missingExamplesWords.length} từ khuyết ví dụ.`);
             const sqlUpdates = [];
 
-            // 🟢 ĐOẠN KHAI THÁC SONG SONG TỰ ĐỘNG CHỐNG NGHẼN CHO LUỒNG SỐ 6 (GITHUB ACTIONS)
             const subKeys = GROQ_API_KEY.split(",").map(k => k.trim()).filter(Boolean);
 
             if (subKeys.length > 1) {
-                // 👉 CHẾ ĐỘ CHẠY SONG SONG BẤT ĐỒNG BỘ CHO WORKER 6
+                // 👉 CHẾ ĐỘ CHẠY SONG SONG BẤT ĐỒNG BỘ CHO WORKER 6 (Đã cập nhật in log chi tiết)
                 const totalParallelWords = subKeys.length * GROUP_SIZE; // 6 keys x 5 từ = 30 từ mỗi mẻ
 
                 for (let i = 0; i < missingExamplesWords.length; i += totalParallelWords) {
                     const batchWords = missingExamplesWords.slice(i, i + totalParallelWords);
                     
-                    // Chia nhỏ mẻ 30 từ thành 6 nhóm nhỏ (mỗi nhóm 5 từ)
                     const subgroups = [];
                     for (let j = 0; j < batchWords.length; j += GROUP_SIZE) {
                         subgroups.push(batchWords.slice(j, j + GROUP_SIZE));
@@ -268,7 +266,8 @@ async function run() {
                         if (batchResult && typeof batchResult === 'object') {
                             const subgroup = subgroups[subgroupIndex];
                             let successInGroup = 0;
-                            const successWords = [];
+                            const successWords = []; // 🟢 Đã thêm: Khai báo mảng chứa từ thành công
+                            
                             subgroup.forEach(item => {
                                 const aiExs = batchResult[item.id] || batchResult[item.id.toString()];
                                 if (Array.isArray(aiExs) && aiExs.length > 0) {
@@ -276,17 +275,17 @@ async function run() {
                                     const escapedJsonStr = JSON.stringify(mergedExamples).replace(/'/g, "''");
                                     sqlUpdates.push(`UPDATE dictionary SET examples = '${escapedJsonStr}' WHERE id = ${item.id};`);
                                     successInGroup++;
-                                    successWords.push(item.word);
+                                    successWords.push(item.word); // 🟢 Đã thêm: Thêm từ thành công vào mảng
                                 }
                             });
-                            console.log(`   ✓ [Worker ${workerId} - Luồng ${subgroupIndex}] Đã hoàn thành ${successInGroup}/${subgroup.length} từ.`);
+                            console.log(`   ✓ [Worker ${workerId} - Luồng ${subgroupIndex}] Đã hoàn thành ${successInGroup}/${subgroup.length} từ [ ${successWords.join(', ')} ].`);
                         }
                     });
 
-                    await new Promise(r => setTimeout(r, 1800)); // Giãn cách thông lượng chống nghẽn
+                    await new Promise(r => setTimeout(r, 1800)); 
                 }
             } else {
-                // 👉 CHẾ ĐỘ CHẠY TUẦN TỰ TIÊU CHUẨN (CHO CÁC WORKER 0 ĐẾN 5 TRÊN CODESPACES)
+                // 👉 CHẾ ĐỘ CHẠY TUẦN TỰ TIÊU CHUẨN (CHO CÁC WORKER 0 ĐẾN 5 - Đã cập nhật in log chi tiết)
                 for (let i = 0; i < missingExamplesWords.length; i += GROUP_SIZE) {
                     const group = missingExamplesWords.slice(i, i + GROUP_SIZE);
                     const groupWordsList = group.map(g => g.word).join(', ');
@@ -296,7 +295,8 @@ async function run() {
 
                     if (batchResult && typeof batchResult === 'object') {
                         let successInGroup = 0;
-                        const successWords = [];
+                        const successWords = []; // 🟢 Đã thêm: Khai báo mảng chứa từ thành công
+                        
                         group.forEach(item => {
                             const aiExs = batchResult[item.id] || batchResult[item.id.toString()];
                             if (Array.isArray(aiExs) && aiExs.length > 0) {
@@ -304,10 +304,10 @@ async function run() {
                                 const escapedJsonStr = JSON.stringify(mergedExamples).replace(/'/g, "''");
                                 sqlUpdates.push(`UPDATE dictionary SET examples = '${escapedJsonStr}' WHERE id = ${item.id};`);
                                 successInGroup++;
-                                successWords.push(item.word);
+                                successWords.push(item.word); // 🟢 Đã thêm: Thêm từ thành công vào mảng
                             }
                         });
-                        console.log(`   ✓ [Worker ${workerId}] Đã hoàn thành ${successInGroup}/${group.length} từ.`);
+                        console.log(`   ✓ [Worker ${workerId}] Đã hoàn thành ${successInGroup}/${group.length} từ [ ${successWords.join(', ')} ].`);
                     }
                     await new Promise(r => setTimeout(r, 1800));
                 }
