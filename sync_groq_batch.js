@@ -50,7 +50,7 @@ try {
     process.exit(1);
 }
 
-// HÀM XỬ LÝ HYBRID CHỐNG NGHẼN (Hỗ trợ định tuyến 3 luồng: Groq, Mistral, Cerebras trên Codespaces)
+// HÀM XỬ LÝ HYBRID CHỐNG NGHẼN (Đã sửa đổi: Ngắt luồng lập tức khi chạm giới hạn 429)
 async function generateBatchWithGroq(wordsArray, apiKey) {
   const wordsPayload = wordsArray.map((w) => ({ id: w.id, word: w.word, meaning: w.meaning || "Chưa rõ nghĩa" }));
   const aiPrompt = `Bạn là giáo viên tiếng Nhật. Dưới đây là danh sách các từ vựng cần đặt câu ví dụ:
@@ -128,37 +128,12 @@ async function generateBatchWithGroq(wordsArray, apiKey) {
 
     clearTimeout(timeoutId); 
 
-    // TỰ ĐỘNG BẮT LỖI 429 RATE LIMIT VÀ ĐỢI RECURSIVE RETRY
+    // 🟢 ĐÃ SỬA: Ngắt kết nối lập tức, không ngủ đông đệ quy gây kẹt luồng song song của máy chủ
     if (response.status === 429) {
       const errJson = await response.json().catch(() => ({}));
       const errMsg = errJson.error?.message || "";
-      
-      let waitSeconds = 25; 
-      
-      const retryHeader = response.headers.get("retry-after");
-      if (retryHeader) {
-        waitSeconds = parseInt(retryHeader, 10) + 2;
-      } else {
-        const minSecMatch = errMsg.match(/try again in (\d+)m([\d\.]+)s/i);
-        if (minSecMatch) {
-          const minutes = parseInt(minSecMatch[1], 10);
-          const seconds = parseFloat(minSecMatch[2]);
-          waitSeconds = minutes * 60 + seconds + 2; 
-        } else {
-          const secMatch = errMsg.match(/try again in ([\d\.]+)s/i);
-          if (secMatch) {
-            waitSeconds = parseFloat(secMatch[1]) + 2;
-          }
-        }
-      }
-
-      console.log(`\n   ⚠ [Worker ${workerId}] Chạm giới hạn Rate Limit của mô hình ${modelId}.`);
-      console.log(`   ⏳ Tự động tạm dừng trong ${Math.round(waitSeconds)} giây để phục hồi tài nguyên...`);
-      
-      await new Promise(r => setTimeout(r, waitSeconds * 1000));
-      
-      console.log(`   🔄 Đang tự động gọi đệ quy thử lại mẻ từ vựng này...`);
-      return generateBatchWithGroq(wordsArray, apiKey); 
+      console.error(`❌ [API Limit 429] Mô hình ${modelId} báo chạm giới hạn hạn ngạch (Rate Limit/TPD): ${errMsg || response.statusText}. Đang tự động ngắt kết nối luồng này để bảo vệ các luồng khác.`);
+      return null; // Trả về rỗng ngay lập tức, giải phóng luồng chính
     }
 
     if (!response.ok) {
@@ -242,7 +217,7 @@ async function run() {
             const subKeys = GROQ_API_KEY.split(",").map(k => k.trim()).filter(Boolean);
 
             if (subKeys.length > 1) {
-                // 👉 CHẾ ĐỘ CHẠY SONG SONG BẤT ĐỒNG BỘ CHO WORKER 6 (Đã cập nhật in log chi tiết)
+                // 👉 CHẾ ĐỘ CHẠY SONG SONG BẤT ĐỒNG BỘ CHO WORKER 6
                 const totalParallelWords = subKeys.length * GROUP_SIZE; // 6 keys x 5 từ = 30 từ mỗi mẻ
 
                 for (let i = 0; i < missingExamplesWords.length; i += totalParallelWords) {
@@ -266,7 +241,7 @@ async function run() {
                         if (batchResult && typeof batchResult === 'object') {
                             const subgroup = subgroups[subgroupIndex];
                             let successInGroup = 0;
-                            const successWords = []; // 🟢 Đã thêm: Khai báo mảng chứa từ thành công
+                            const successWords = []; 
                             
                             subgroup.forEach(item => {
                                 const aiExs = batchResult[item.id] || batchResult[item.id.toString()];
@@ -275,7 +250,7 @@ async function run() {
                                     const escapedJsonStr = JSON.stringify(mergedExamples).replace(/'/g, "''");
                                     sqlUpdates.push(`UPDATE dictionary SET examples = '${escapedJsonStr}' WHERE id = ${item.id};`);
                                     successInGroup++;
-                                    successWords.push(item.word); // 🟢 Đã thêm: Thêm từ thành công vào mảng
+                                    successWords.push(item.word); 
                                 }
                             });
                             console.log(`   ✓ [Worker ${workerId} - Luồng ${subgroupIndex}] Đã hoàn thành ${successInGroup}/${subgroup.length} từ [ ${successWords.join(', ')} ].`);
@@ -285,7 +260,7 @@ async function run() {
                     await new Promise(r => setTimeout(r, 1800)); 
                 }
             } else {
-                // 👉 CHẾ ĐỘ CHẠY TUẦN TỰ TIÊU CHUẨN (CHO CÁC WORKER 0 ĐẾN 5 - Đã cập nhật in log chi tiết)
+                // 👉 CHẾ ĐỘ CHẠY TUẦN TỰ TIÊU CHUẨN (CHO CÁC WORKER 0 ĐẾN 5)
                 for (let i = 0; i < missingExamplesWords.length; i += GROUP_SIZE) {
                     const group = missingExamplesWords.slice(i, i + GROUP_SIZE);
                     const groupWordsList = group.map(g => g.word).join(', ');
@@ -295,7 +270,7 @@ async function run() {
 
                     if (batchResult && typeof batchResult === 'object') {
                         let successInGroup = 0;
-                        const successWords = []; // 🟢 Đã thêm: Khai báo mảng chứa từ thành công
+                        const successWords = []; 
                         
                         group.forEach(item => {
                             const aiExs = batchResult[item.id] || batchResult[item.id.toString()];
@@ -304,7 +279,7 @@ async function run() {
                                 const escapedJsonStr = JSON.stringify(mergedExamples).replace(/'/g, "''");
                                 sqlUpdates.push(`UPDATE dictionary SET examples = '${escapedJsonStr}' WHERE id = ${item.id};`);
                                 successInGroup++;
-                                successWords.push(item.word); // 🟢 Đã thêm: Thêm từ thành công vào mảng
+                                successWords.push(item.word); 
                             }
                         });
                         console.log(`   ✓ [Worker ${workerId}] Đã hoàn thành ${successInGroup}/${group.length} từ [ ${successWords.join(', ')} ].`);
