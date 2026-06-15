@@ -1,16 +1,25 @@
 # .github/workflows/worker_6_sync.yml
-name: Worker 6 Background Sync (Parallel 6 Keys)
+name: Super Parallel Background Sync (7 Workers Matrix)
 
 on:
   schedule:
-    # ⏱️ Tự động chạy ngầm mỗi 15 phút một lần
+    # ⏱️ Tự động kích hoạt ngầm mỗi 15 phút một lần
     - cron: '*/15 * * * *'
-  # 🕹️ Cho phép bấm nút kích hoạt chạy thủ công trên giao diện GitHub Actions bất cứ lúc nào
+  # 🕹️ Cho phép bấm nút kích hoạt chạy thủ công bất cứ lúc nào
   workflow_dispatch: 
+
+permissions:
+  contents: read
 
 jobs:
   sync_task:
     runs-on: ubuntu-latest
+    
+    # MA TRẬN 7 MÁY ẢO SONG SONG: GitHub sẽ khởi động đồng loạt 7 máy ảo riêng biệt chạy cùng lúc!
+    strategy:
+      matrix:
+        worker_id: [0, 1, 2, 3, 4, 5, 6]
+      fail-fast: false # Máy ảo này gặp lỗi thì các máy khác vẫn hoạt động độc lập
 
     steps:
       - name: Checkout mã nguồn từ GitHub của bạn
@@ -22,14 +31,12 @@ jobs:
           node-version: '20'
 
       - name: Cài đặt và cấu hình Wrangler CLI toàn cục
-        run: |
-          npm install -g wrangler
+        run: npm install -g wrangler
 
-      - name: Khởi chạy luồng số 6 đặt câu song song 6 Keys
+      - name: Khởi chạy luồng số ${{ matrix.worker_id }} đặt câu tự động
         env:
-          # Token đăng nhập tự động của Cloudflare (Lấy từ Secrets)
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          # Chuỗi 6 Keys phụ của bạn (Lấy từ Secrets)
+          # 🟢 ĐÃ SỬA: Đọc trực tiếp chuỗi gộp 7 luồng từ biến GROQ_API_KEY_6 của bạn
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY_6 }}
         run: |
-          node sync_groq_batch.js --worker=6
+          node sync_groq_batch.js --worker=${{ matrix.worker_id }}
