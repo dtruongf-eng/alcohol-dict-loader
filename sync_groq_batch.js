@@ -41,7 +41,7 @@ try {
     process.exit(1);
 }
 
-// HÀM XỬ LÝ HYBRID CHỐNG NGHẼN (Đã sửa đổi: Mọi Worker đều chạy song song đa Keys và ngắt luồng 429 lập tức)
+// HÀM XỬ LÝ HYBRID CHỐNG NGHẼN (Hỗ trợ định tuyến 4 luồng song song: Groq, Mistral, Cerebras, Puter)
 async function generateBatchWithGroq(wordsArray, apiKey) {
   const wordsPayload = wordsArray.map((w) => ({ id: w.id, word: w.word, meaning: w.meaning || "Chưa rõ nghĩa" }));
   const aiPrompt = `Bạn là giáo viên tiếng Nhật. Dưới đây là danh sách các từ vựng cần đặt câu ví dụ:
@@ -66,7 +66,7 @@ async function generateBatchWithGroq(wordsArray, apiKey) {
     response_format: { type: "json_object" }
   };
 
-  // 1. NẾU LÀ KEY MISTRAL AI (mistral:) -> ĐỊNH TUYẾN SANG MÁY CHỦ MISTRAL (mistral-small-latest)
+  // 🟢 1. NẾU LÀ KEY MISTRAL AI (mistral:) -> ĐỊNH TUYẾN SANG MÁY CHỦ MISTRAL
   if (apiKey.startsWith("mistral:")) {
     apiUrl = "https://api.mistral.ai/v1/chat/completions";
     modelId = "mistral-small-latest";
@@ -78,7 +78,7 @@ async function generateBatchWithGroq(wordsArray, apiKey) {
       response_format: { type: "json_object" }
     };
   } 
-  // 2. NẾU LÀ KEY CỦA CEREBRAS (cerebras:) -> ĐỊNH TUYẾN SANG CEREBRAS (zai-glm-4.7)
+  // 🟢 2. NẾU LÀ KEY CỦA CEREBRAS (cerebras:) -> ĐỊNH TUYẾN SANG CEREBRAS (zai-glm-4.7)
   else if (apiKey.startsWith("cerebras:")) {
     apiUrl = "https://api.cerebras.ai/v1/chat/completions";
     modelId = "zai-glm-4.7"; 
@@ -90,7 +90,18 @@ async function generateBatchWithGroq(wordsArray, apiKey) {
       response_format: { type: "json_object" }
     };
   }
-  // 3. NẾU LÀ KEY CỦA GROQ (gsk_) -> ĐỊNH TUYẾN SANG MÁY CHỦ GROQ NHƯ CŨ
+  // 🟢 3. NẾU LÀ KEY CỦA PUTER AI (puter:) -> ĐỊNH TUYẾN SANG CỔNG BIÊN MIỄN PHÍ PUTER (Qwen 3.6 27B)
+  else if (apiKey.startsWith("puter:")) {
+    apiUrl = "https://api.puter.com/puterai/openai/v1/chat/completions";
+    modelId = "qwen/qwen3.6-27b"; // 🟢 Sử dụng siêu mẫu Qwen 3.6 27B mới nhất chạy miễn phí trên Puter
+    finalApiKey = apiKey.replace("puter:", "");
+    requestBody = {
+      model: modelId,
+      messages: [{ role: "user", content: aiPrompt }],
+      temperature: 0.2
+    };
+  }
+  // 🟢 4. NẾU LÀ KEY CỦA GROQ (gsk_) -> ĐỊNH TUYẾN SANG MÁY CHỦ GROQ NHƯ CŨ
   else if (apiKey.startsWith("gsk_")) {
     apiUrl = "https://api.groq.com/openai/v1/chat/completions";
     modelId = "qwen/qwen3-32b";
