@@ -9,24 +9,15 @@ const args = process.argv.slice(2);
 const workerArg = args.find(a => a.startsWith('--worker='));
 const workerId = workerArg ? parseInt(workerArg.split('=')[1]) : 0; // Số hiệu tiến trình (0 đến 6)
 
-// 🔑 DANH SÁCH CÁC API KEYS CỦA BẠN TRÊN CODESPACES (Đã giữ nguyên vẹn các Keys của bạn)
-const GROQ_KEYS_POOL = [
-    "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", // Cấp cho luồng --worker=0 (Groq 1)
-    "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", // Cấp cho luồng --worker=1 (Groq 2)
-    "cerebras:csk-wnrp46hpvftpk96re59tr49krhnxmh49k3yvd9chte4423cx", // Cấp cho luồng --worker=2 (Cerebras 1)
-    "cerebras:csk-2vxkv68rrmn56vrwtjxd68wk2y2pc25xv9ppvnmchfnvc8mr", // Cấp cho luồng --worker=3 (Cerebras 2)
-    "mistral:LLRqw6qYbuza5IMeC6dnkuWOCuvWzPpA",   // Worker 4
-    "mistral:1QWbddMULh6YiC7S4cEGPx0TiLFGItmc",   // Worker 5
-    
-    // Luồng 6 (Dành cho GitHub Actions): Chứa chuỗi gộp 6 Keys AI phụ của bạn ngăn cách bởi dấu phẩy
-    "gsk_KeyGroqPhụ1,gsk_KeyGroqPhụ2,cerebras:KeyCerebrasPhụ1,cerebras:KeyCerebrasPhụ2,mistral:KeyMistralPhụ1,mistral:KeyMistralPhụ2"
-];
+// 🔑 BẢO MẬT TUYỆT ĐỐI: Giải nén chuỗi kép (Pipe + Comma) từ môi trường bảo mật của GitHub
+const GROQ_KEYS_POOL = (process.env.GROQ_API_KEY || "").split("|").map(k => k.trim()).filter(Boolean);
+const workerPoolString = GROQ_KEYS_POOL[workerId] || "";
 
-// Tự động bốc đúng Key dựa trên số hiệu workerId
-const GROQ_API_KEY = process.env.GROQ_API_KEY || GROQ_KEYS_POOL[workerId];
+// Tách tiếp mẻ Keys song song chuyên biệt cho Worker hiện tại
+const subKeys = workerPoolString.split(",").map(k => k.trim()).filter(Boolean);
 
-if (!GROQ_API_KEY || GROQ_API_KEY.includes("Mã_Key_")) {
-    console.error(`❌ [Worker ${workerId}] Lỗi: Bạn chưa cấu hình hoặc điền thiếu API Key số [${workerId}]!`);
+if (subKeys.length === 0) {
+    console.error(`❌ [Worker ${workerId}] Lỗi: Biến môi trường không tồn tại hoặc cấu hình thiếu các Keys song song cho luồng [${workerId}]!`);
     process.exit(1);
 }
 
@@ -50,8 +41,8 @@ try {
     process.exit(1);
 }
 
-// HÀM XỬ LÝ HYBRID CHỐNG NGHẼN (Hỗ trợ định tuyến 3 luồng: Groq, Mistral, Cerebras trên Codespaces)
-async function generateBatchWithGroq(wordsArray, apiKey, isParallel = false) {
+// HÀM XỬ LÝ HYBRID CHỐNG NGHẼN (Đã sửa đổi: Mọi Worker đều chạy song song đa Keys và ngắt luồng 429 lập tức)
+async function generateBatchWithGroq(wordsArray, apiKey) {
   const wordsPayload = wordsArray.map((w) => ({ id: w.id, word: w.word, meaning: w.meaning || "Chưa rõ nghĩa" }));
   const aiPrompt = `Bạn là giáo viên tiếng Nhật. Dưới đây là danh sách các từ vựng cần đặt câu ví dụ:
     ${JSON.stringify(wordsPayload)}
@@ -128,43 +119,12 @@ async function generateBatchWithGroq(wordsArray, apiKey, isParallel = false) {
 
     clearTimeout(timeoutId); 
 
-    // TỰ ĐỘNG BẮT LỖI 429 RATE LIMIT VÀ ĐỢI RECURSIVE RETRY
+    // LUÔN NGẤT LUỒNG LẬP TỨC KHI CHẠM 429 (Vì tất cả các Worker hiện tại đều chạy song song nhiều Keys)
     if (response.status === 429) {
       const errJson = await response.json().catch(() => ({}));
       const errMsg = errJson.error?.message || "";
-      
-      // 🟢 PHÂN TÁCH LỖI THÔNG MINH CHO LUỒNG SONG SONG (isParallel = true)
-      if (isParallel) {
-        console.error(`❌ [API Limit 429] Mô hình ${modelId} báo chạm giới hạn hạn ngạch (Rate Limit/TPD). Đang tự động ngắt kết nối luồng con này để bảo vệ các luồng khác.`);
-        return null; // Trả về rỗng ngay lập tức, giải phóng luồng chính không bị kẹt
-      }
-
-      // 🟡 TUÂN THỦ CHỜ ĐỢI CHO LUỒNG TUẦN TỰ (isParallel = false)
-      let waitSeconds = 25; 
-      const retryHeader = response.headers.get("retry-after");
-      if (retryHeader) {
-        waitSeconds = parseInt(retryHeader, 10) + 2;
-      } else {
-        const minSecMatch = errMsg.match(/try again in (\d+)m([\d\.]+)s/i);
-        if (minSecMatch) {
-          const minutes = parseInt(minSecMatch[1], 10);
-          const seconds = parseFloat(minSecMatch[2]);
-          waitSeconds = minutes * 60 + seconds + 2; 
-        } else {
-          const secMatch = errMsg.match(/try again in ([\d\.]+)s/i);
-          if (secMatch) {
-            waitSeconds = parseFloat(secMatch[1]) + 2;
-          }
-        }
-      }
-
-      console.log(`\n   ⚠ [Worker ${workerId}] Chạm giới hạn Rate Limit của mô hình ${modelId}.`);
-      console.log(`   ⏳ Tự động tạm dừng trong ${Math.round(waitSeconds)} giây để phục hồi tài nguyên...`);
-      
-      await new Promise(r => setTimeout(r, waitSeconds * 1000));
-      
-      console.log(`   🔄 Đang tự động gọi đệ quy thử lại mẻ từ vựng này...`);
-      return generateBatchWithGroq(wordsArray, apiKey, isParallel); // Gọi lại chính nó để xử lý tiếp mẻ này
+      console.error(`❌ [API Limit 429] Mô hình ${modelId} báo chạm giới hạn: ${errMsg || response.statusText}. Đang tự động ngắt kết nối luồng con này để bảo vệ các luồng khác.`);
+      return null; 
     }
 
     if (!response.ok) {
@@ -197,6 +157,7 @@ async function run() {
     let totalUpdated = 0;
     console.log(`=== BẮT ĐẦU WORKER ${workerId} ===`);
     console.log(`📊 Số lượng từ cần xử lý: ${todoIds.length}`);
+    console.log(`🔑 Luồng ${workerId} khởi chạy chế độ xử lý SONG SONG bằng ${subKeys.length} API Keys.`);
 
     while (todoIds.length > 0) {
         const currentBatchIds = todoIds.slice(0, BATCH_SIZE);
@@ -245,65 +206,33 @@ async function run() {
             console.log(`⏳ [Worker ${workerId}] Phát hiện ${missingExamplesWords.length} từ khuyết ví dụ.`);
             const sqlUpdates = [];
 
-            const subKeys = GROQ_API_KEY.split(",").map(k => k.trim()).filter(Boolean);
+            // 👉 100% CÁC WORKER BÂY GIỜ ĐỀU TỰ ĐỘNG CHẠY SONG SONG TRÊN GITHUB ACTIONS
+            const totalParallelWords = subKeys.length * GROUP_SIZE; // Ví dụ: 6 keys x 5 từ = 30 từ mỗi mẻ
 
-            if (subKeys.length > 1) {
-                // 👉 CHẾ ĐỘ CHẠY SONG SONG BẤT ĐỒNG BỘ CHO WORKER 6
-                const totalParallelWords = subKeys.length * GROUP_SIZE; // 6 keys x 5 từ = 30 từ mỗi mẻ
-
-                for (let i = 0; i < missingExamplesWords.length; i += totalParallelWords) {
-                    const batchWords = missingExamplesWords.slice(i, i + totalParallelWords);
-                    
-                    const subgroups = [];
-                    for (let j = 0; j < batchWords.length; j += GROUP_SIZE) {
-                        subgroups.push(batchWords.slice(j, j + GROUP_SIZE));
-                    }
-
-                    console.log(`👉 [Worker ${workerId}] Đang xử lý SONG SONG ${subgroups.length} nhóm bằng ${subKeys.length} API Keys...`);
-
-                    const promises = subgroups.map((subgroup, keyIndex) => {
-                        const apiKey = subKeys[keyIndex % subKeys.length];
-                        return generateBatchWithGroq(subgroup, apiKey, true); // 🟢 ĐÃ THÊM: isParallel = true
-                    });
-
-                    const results = await Promise.all(promises);
-
-                    results.forEach((batchResult, subgroupIndex) => {
-                        if (batchResult && typeof batchResult === 'object') {
-                            const subgroup = subgroups[subgroupIndex];
-                            let successInGroup = 0;
-                            const successWords = []; 
-                            
-                            subgroup.forEach(item => {
-                                const aiExs = batchResult[item.id] || batchResult[item.id.toString()];
-                                if (Array.isArray(aiExs) && aiExs.length > 0) {
-                                    const mergedExamples = [...item.existingExamples, ...aiExs].slice(0, TARGET_EXAMPLES);
-                                    const escapedJsonStr = JSON.stringify(mergedExamples).replace(/'/g, "''");
-                                    sqlUpdates.push(`UPDATE dictionary SET examples = '${escapedJsonStr}' WHERE id = ${item.id};`);
-                                    successInGroup++;
-                                    successWords.push(item.word); 
-                                }
-                            });
-                            console.log(`   ✓ [Worker ${workerId} - Luồng ${subgroupIndex}] Đã hoàn thành ${successInGroup}/${subgroup.length} từ [ ${successWords.join(', ')} ].`);
-                        }
-                    });
-
-                    await new Promise(r => setTimeout(r, 1800)); 
+            for (let i = 0; i < missingExamplesWords.length; i += totalParallelWords) {
+                const batchWords = missingExamplesWords.slice(i, i + totalParallelWords);
+                
+                const subgroups = [];
+                for (let j = 0; j < batchWords.length; j += GROUP_SIZE) {
+                    subgroups.push(batchWords.slice(j, j + GROUP_SIZE));
                 }
-            } else {
-                // 👉 CHẾ ĐỘ CHẠY TUẦN TỰ TIÊU CHUẨN (CHO CÁC WORKER 0 ĐẾN 5)
-                for (let i = 0; i < missingExamplesWords.length; i += GROUP_SIZE) {
-                    const group = missingExamplesWords.slice(i, i + GROUP_SIZE);
-                    const groupWordsList = group.map(g => g.word).join(', ');
-                    console.log(`👉 [Worker ${workerId}] Đang xử lý nhóm tuần tự: [ ${groupWordsList} ]...`);
-                    
-                    const batchResult = await generateBatchWithGroq(group, GROQ_API_KEY, false); // 🟢 ĐÃ THÊM: isParallel = false
 
+                console.log(`👉 [Worker ${workerId}] Đang xử lý SONG SONG ${subgroups.length} nhóm bằng ${subKeys.length} API Keys...`);
+
+                const promises = subgroups.map((subgroup, keyIndex) => {
+                    const apiKey = subKeys[keyIndex % subKeys.length];
+                    return generateBatchWithGroq(subgroup, apiKey);
+                });
+
+                const results = await Promise.all(promises);
+
+                results.forEach((batchResult, subgroupIndex) => {
                     if (batchResult && typeof batchResult === 'object') {
+                        const subgroup = subgroups[subgroupIndex];
                         let successInGroup = 0;
                         const successWords = []; 
                         
-                        group.forEach(item => {
+                        subgroup.forEach(item => {
                             const aiExs = batchResult[item.id] || batchResult[item.id.toString()];
                             if (Array.isArray(aiExs) && aiExs.length > 0) {
                                 const mergedExamples = [...item.existingExamples, ...aiExs].slice(0, TARGET_EXAMPLES);
@@ -313,10 +242,11 @@ async function run() {
                                 successWords.push(item.word); 
                             }
                         });
-                        console.log(`   ✓ [Worker ${workerId}] Đã hoàn thành ${successInGroup}/${group.length} từ [ ${successWords.join(', ')} ].`);
+                        console.log(`   ✓ [Worker ${workerId} - Luồng ${subgroupIndex}] Đã hoàn thành ${successInGroup}/${subgroup.length} từ [ ${successWords.join(', ')} ].`);
                     }
-                    await new Promise(r => setTimeout(r, 1800));
-                }
+                });
+
+                await new Promise(r => setTimeout(r, 1800)); 
             }
 
             // Ghi hàng loạt SQL vào D1
