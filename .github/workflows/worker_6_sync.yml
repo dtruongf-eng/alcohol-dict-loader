@@ -1,11 +1,11 @@
 # .github/workflows/worker_6_sync.yml
-name: Super Parallel Background Sync (7 Workers Matrix)
+name: Super Parallel Background Sync (10 Workers Matrix)
 
 on:
   schedule:
     # ⏱️ Tự động kích hoạt ngầm mỗi 15 phút một lần
     - cron: '*/15 * * * *'
-  # 🕹️ Cho phép bấm nút kích hoạt chạy thủ công bất cứ lúc nào
+  # 🕹️ Cho phép bấm nút kích hoạt chạy thủ công trên giao diện bất cứ lúc nào
   workflow_dispatch: 
 
 permissions:
@@ -15,10 +15,10 @@ jobs:
   sync_task:
     runs-on: ubuntu-latest
     
-    # MA TRẬN 7 MÁY ẢO SONG SONG: GitHub sẽ khởi động đồng loạt 7 máy ảo riêng biệt chạy cùng lúc!
+    # 🟢 MA TRẬN 10 MÁY ẢO SONG SONG: GitHub sẽ khởi động đồng loạt 10 máy ảo riêng biệt chạy cùng lúc!
     strategy:
       matrix:
-        worker_id: [0, 1, 2, 3, 4, 5, 6]
+        worker_id: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
       fail-fast: false # Máy ảo này gặp lỗi thì các máy khác vẫn hoạt động độc lập
 
     steps:
@@ -36,7 +36,7 @@ jobs:
       - name: Khởi chạy luồng số ${{ matrix.worker_id }} đặt câu tự động
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          # 🟢 ĐÃ SỬA: Đọc trực tiếp chuỗi gộp 7 luồng từ biến GROQ_API_KEY_6 của bạn
+          # Đọc trực tiếp chuỗi gộp 10 luồng từ biến GROQ_API_KEY_6 của bạn
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY_6 }}
         run: |
           node sync_groq_batch.js --worker=${{ matrix.worker_id }}

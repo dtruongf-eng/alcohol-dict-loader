@@ -3,17 +3,16 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 
 const DB_NAME = "alcohol-dictionary";
-const TOTAL_WORKERS = 7;
+const TOTAL_WORKERS = 10; // 🟢 ĐÃ NÂNG CẤP: Sắp xếp phân chia cho 10 luồng Worker song song
 
 async function run() {
-    console.log("🔍 Đang truy vấn danh sách ID chẵn cần bổ sung ví dụ từ D1...");
+    console.log("🔍 Đang truy vấn danh sách TOÀN BỘ từ khuyết ví dụ từ D1 (Không lọc chẵn lẻ)...");
     
-    // SQL: Chỉ lấy các dòng trống ví dụ và có ID chẵn (Sử dụng phép toán số nguyên chẵn an toàn tuyệt đối cho shell)
-    const cmd = `npx wrangler d1 execute ${DB_NAME} --remote --command="SELECT id FROM dictionary WHERE (examples IS NULL OR examples = '[]' OR examples = '') AND (id / 2) * 2 = id ORDER BY id" --json`;
+    // SQL: Kéo tất cả các từ trống ví dụ (bao gồm cả ID chẵn lẫn lẻ) để xử lý toàn diện
+    const cmd = `npx wrangler d1 execute ${DB_NAME} --remote --command="SELECT id FROM dictionary WHERE examples IS NULL OR examples = '[]' OR examples = '' ORDER BY id" --json`;
     
     let output;
     try {
-        // 🟢 ĐÃ SỬA: Nới rộng maxBuffer lên 100MB để chống lỗi ENOBUFS hoàn toàn
         output = execSync(cmd, { maxBuffer: 1024 * 1024 * 100 }).toString();
     } catch (err) {
         console.error("❌ Lỗi truy vấn D1:", err.message);
@@ -32,30 +31,30 @@ async function run() {
     const rows = parsed[0]?.results || [];
 
     if (rows.length === 0) {
-        console.log("🎉 Tuyệt vời! Tất cả các từ vựng có ID chẵn đã được bổ sung ví dụ.");
+        console.log("🎉 Tuyệt vời! Tất cả các từ vựng trong từ điển đã được bổ sung ví dụ.");
         return;
     }
 
     const ids = rows.map(r => r.id);
-    console.log(`📊 Phát hiện tổng cộng ${ids.length} từ ID chẵn khuyết ví dụ. Đang phân bổ đều cho ${TOTAL_WORKERS} luồng...`);
+    console.log(`📊 Phát hiện tổng cộng ${ids.length} từ khuyết ví dụ. Đang phân bổ đều cho ${TOTAL_WORKERS} luồng...`);
 
-    // Khởi tạo mảng nhiệm vụ cho từng Worker
+    // Khởi tạo mảng nhiệm vụ cho 10 Workers
     const workerLists = Array.from({ length: TOTAL_WORKERS }, () => []);
 
-    // Phân chia nhiệm vụ theo cơ chế Round-Robin để đảm bảo khối lượng công việc cân bằng nhất
+    // Phân chia nhiệm vụ đều theo cơ chế Round-Robin
     ids.forEach((id, index) => {
         const workerId = index % TOTAL_WORKERS;
         workerLists[workerId].push(id);
     });
 
-    // Ghi nhiệm vụ ra các file JSON cục bộ
+    // Ghi nhiệm vụ ra 10 tệp JSON cục bộ (từ todo_worker_0.json đến todo_worker_9.json)
     for (let i = 0; i < TOTAL_WORKERS; i++) {
         const filename = `./todo_worker_${i}.json`;
         fs.writeFileSync(filename, JSON.stringify(workerLists[i], null, 2));
         console.log(`📝 Đã chuẩn bị ${workerLists[i].length} từ cho Worker ${i} -> ${filename}`);
     }
 
-    console.log("\n✅ Đã hoàn thành chuẩn bị nhiệm vụ ID chẵn. Bạn có thể khởi động các luồng Worker.");
+    console.log("\n✅ Đã hoàn thành phân chia công việc cho 10 luồng. Sẵn sàng đẩy lên GitHub.");
 }
 
 run().catch(err => console.error(err));
