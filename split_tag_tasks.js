@@ -3,36 +3,13 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 
 const DB_NAME = "alcohol-dictionary";
-const TOTAL_WORKERS = 10; // Chia đều nhiệm vụ cho 10 luồng Worker song song
+const TOTAL_WORKERS = 10; // Chia đều cho 10 luồng Worker song song
 
 async function run() {
-    console.log("🔍 [Vá Nóng] Đang quét và lọc từ vựng JLPT (N5-N1) đạt chuẩn chất lượng từ D1...");
+    console.log("🔍 Đang quét từ vựng JLPT (N5-N1) chưa được gán nhãn tags từ D1...");
     
-    // =========================================================================
-    // 🚧 HỆ THỐNG MÀNG LỌC CHẤT LƯỢNG (QUALITY GATES) TRÊN SQL:
-    // - Chỉ lấy từ có level JLPT và chưa được gán tags.
-    // - Bắt buộc cột từ vựng (word), cách đọc (reading) và nghĩa (meaning) không được trống.
-    // - Loại bỏ các thuật ngữ chuyên ngành chứa dấu ngoặc giải thích (), （）.
-    // - Loại bỏ các công thức toán học chứa dấu bằng = hoặc dấu cộng +.
-    // - Giới hạn độ dài từ vựng dưới 10 ký tự (loại bỏ các định nghĩa dài lê thê).
-    // =========================================================================
-    const sqlQuery = `
-        SELECT id FROM dictionary 
-        WHERE level IN ('N5', 'N4', 'N3', 'N2', 'N1') 
-          AND (tags IS NULL OR tags = '')
-          AND word IS NOT NULL AND trim(word) != ''
-          AND reading IS NOT NULL AND trim(reading) != ''
-          AND meaning IS NOT NULL AND trim(meaning) != ''
-          AND word NOT LIKE '%(%' 
-          AND word NOT LIKE '%)%'
-          AND word NOT LIKE '%（%'
-          AND word NOT LIKE '%）%'
-          AND word NOT LIKE '%=%'
-          AND word NOT LIKE '%+%'
-          AND length(word) <= 10
-        ORDER BY id
-    `.trim().replace(/\s+/g, ' '); // Nén câu lệnh SQL cho gọn gàng
-
+    // Câu lệnh SQL: Chỉ lọc các từ có level JLPT và cột tags bị trống/null
+    const sqlQuery = "SELECT id FROM dictionary WHERE level IN ('N5', 'N4', 'N3', 'N2', 'N1') AND (tags IS NULL OR tags = '') ORDER BY id";
     const cmd = `npx wrangler d1 execute ${DB_NAME} --remote --command="${sqlQuery}" --json`;
     
     let output;
@@ -55,12 +32,12 @@ async function run() {
     const rows = parsed[0]?.results || [];
 
     if (rows.length === 0) {
-        console.log("🎉 Tuyệt vời! Không còn từ vựng đạt chuẩn JLPT nào chưa được gán tags.");
+        console.log("🎉 Tuyệt vời! Tất cả từ vựng JLPT trong từ điển đã được gán tags đầy đủ.");
         return;
     }
 
     const ids = rows.map(r => r.id);
-    console.log(`📊 Phát hiện tổng cộng ${ids.length} từ JLPT đạt chuẩn chất lượng chưa gán tags. Đang phân bổ cho ${TOTAL_WORKERS} luồng...`);
+    console.log(`📊 Phát hiện tổng cộng ${ids.length} từ JLPT chưa gán tags. Đang phân bổ cho ${TOTAL_WORKERS} luồng...`);
 
     // Khởi tạo mảng nhiệm vụ cho 10 Workers
     const workerLists = Array.from({ length: TOTAL_WORKERS }, () => []);
@@ -75,10 +52,10 @@ async function run() {
     for (let i = 0; i < TOTAL_WORKERS; i++) {
         const filename = `./todo_tag_worker_${i}.json`;
         fs.writeFileSync(filename, JSON.stringify(workerLists[i], null, 2));
-        console.log(`📝 Đã chuẩn bị ${workerLists[i].length} từ chất lượng cho Worker ${i} -> ${filename}`);
+        console.log(`📝 Đã chuẩn bị ${workerLists[i].length} từ cho Worker ${i} -> ${filename}`);
     }
 
-    console.log("\n✅ Hoàn thành phân chia công việc gán nhãn đạt chuẩn cho 10 luồng song song.");
+    console.log("\n✅ Hoàn thành phân chia công việc gán nhãn cho 10 luồng song song.");
 }
 
 run().catch(err => console.error(err));
