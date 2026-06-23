@@ -1,0 +1,83 @@
+# .github/workflows/worker_tag_sync.yml
+name: Super Parallel Thematic Tagging Sync (10 Workers Matrix)
+
+on:
+  schedule:
+    # ⏱️ Tự động kích hoạt ngầm mỗi 15 phút một lần
+    - cron: '*/15 * * * *'
+  # 🕹️ Cho phép bấm nút kích hoạt chạy thủ công trên giao diện bất cứ lúc nào
+  workflow_dispatch: 
+
+permissions:
+  contents: read
+
+jobs:
+  # =========================================================================
+  # JOB 1: PHÂN TÁCH NHIỆM VỤ TỰ ĐỘNG (SINGLE RUNNER)
+  # =========================================================================
+  split_tasks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout mã nguồn từ GitHub
+        uses: actions/checkout@v4
+
+      - name: Thiết lập môi trường Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cài đặt Wrangler CLI toàn cục
+        run: npm install -g wrangler
+
+      - name: Khởi chạy lệnh phân chia tác vụ gán nhãn
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          node split_tag_tasks.js
+
+      # Đóng gói và lưu trữ 10 file JSON vừa sinh ra thành Artifact tạm thời
+      - name: Đóng gói và upload mẻ nhiệm vụ tạm thời
+        uses: actions/upload-artifact@v4
+        with:
+          name: todo-tag-tasks
+          path: todo_tag_worker_*.json
+          retention-days: 1 # Chỉ giữ lại 1 ngày để giải phóng dung lượng repo
+
+  # =========================================================================
+  # JOB 2: THỰC THI CHẠY SONG SONG 10 WORKERS (MATRIX RUNNERS)
+  # =========================================================================
+  sync_task:
+    runs-on: ubuntu-latest
+    needs: split_tasks # Chỉ chạy sau khi Job 1 đã chuẩn bị xong file chia việc
+    
+    strategy:
+      matrix:
+        worker_id: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+      fail-fast: false # Luồng này lỗi thì luồng khác vẫn hoạt động độc lập
+
+    steps:
+      - name: Checkout mã nguồn từ GitHub
+        uses: actions/checkout@v4
+
+      - name: Thiết lập môi trường Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cài đặt Wrangler CLI toàn cục
+        run: npm install -g wrangler
+
+      # Tải mẻ nhiệm vụ (Artifact) đã được đóng gói từ Job 1 về thư mục gốc
+      - name: Tải về mẻ nhiệm vụ tương ứng
+        uses: actions/download-artifact@v4
+        with:
+          name: todo-tag-tasks
+          path: .
+
+      - name: Khởi chạy luồng số ${{ matrix.worker_id }} gán tags tự động
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # Sử dụng pool khóa AI xoay tua của bạn
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY_6 }}
+        run: |
+          node sync_tag_batch.js --worker=${{ matrix.worker_id }}
