@@ -4,7 +4,7 @@ import { execSync } from 'child_process';
 
 const DB_NAME = "alcohol-dictionary";
 const JSON_FILE = "./soumatome_n4_vocab.json"; // Tên file JSON Soumatome N4 của bạn
-const BATCH_SIZE = 1000;                       // Gom 1000 lệnh SQL chạy 1 lần để tối ưu tốc độ
+const BATCH_SIZE = 1000;                       // Gom 1000 lệnh SQL chạy 1 lần để tối ưu hóa tốc độ
 
 // Hàm xử lý loại bỏ ký tự nháy đơn nguy hiểm để tránh lỗi cú pháp SQL
 const escapeSQL = (str) => {
@@ -45,7 +45,7 @@ const extractCleanWords = (rawWord) => {
         if (clean && clean !== p) finalWords.push(clean);
         if (noSpaceClean && noSpaceClean !== clean && noSpaceClean !== p) finalWords.push(noSpaceClean);
         
-        // 🟢 BỘ TÁCH ĐỘNG TỪ GHÉP: "勉強する" -> tự tách thêm cả danh từ gốc "勉強" để khớp D1
+        // BỘ TÁCH ĐỘNG TỪ GHÉP: "勉強する" -> tự tách thêm cả danh từ gốc "勉強" để khớp D1
         if (clean.endsWith("する") && clean.length > 2) {
             let rootNoun = clean.substring(0, clean.length - 2);
             if (rootNoun) finalWords.push(rootNoun);
@@ -65,7 +65,15 @@ async function run() {
     let data;
     try {
         const fileContent = fs.readFileSync(JSON_FILE, 'utf8');
-        data = JSON.parse(fileContent);
+        
+        // 🟢 1. BỘ TỰ ĐỘNG LÀM SẠCH VÀ SỬA LỖI FILE JSON (SELF-SANITIZING):
+        // Quét tìm tất cả phím Enter xuống dòng nằm bên trong dấu nháy kép "" và tự động sửa thành "\n" hợp lệ
+        const sanitizedContent = fileContent.replace(/"([^"\\]*(?:\\.[^"\\]*)*)"/g, (match, p1) => {
+            return '"' + p1.replace(/\n/g, '\\n').replace(/\r/g, '') + '"';
+        });
+
+        // 2. Parse nội dung đã được làm sạch hoàn toàn
+        data = JSON.parse(sanitizedContent);
     } catch (e) {
         console.error("❌ Lỗi cấu trúc file JSON:", e.message);
         process.exit(1);
@@ -103,7 +111,7 @@ async function run() {
     // =========================================================================
     // GIAI ĐOẠN 2: TỰ ĐỘNG KHỞI TẠO METADATA CHA & 39 METADATA CON (SECTIONS)
     // =========================================================================
-    console.log("\n⚡ Đang tự động biên dịch đề cương chương trình học Soumatome N4 (Syllabus)...");
+    console.log("⚡ Đang tự động biên dịch đề cương chương trình học Soumatome N4 (Syllabus)...");
     const metadataSqlStatements = [];
 
     // 1. Đăng ký nhãn cha
@@ -112,7 +120,7 @@ async function run() {
         VALUES ('${PARENT_TAG}', '${escapeSQL(PARENT_NAME)}', 'Giáo trình', 'soumatome n4, somatome n4, n4, so cap', NULL, 2);
     `.trim().replace(/\s+/g, ' '));
 
-    const wordsToTagPayload = [];
+    const wordsToTagPayload = []; // Mảng trung gian lưu vết để gán tags cho từ ở Giai đoạn 3
 
     // 2. Duyệt qua mảng phẳng các phân đoạn trong JSON để đăng ký tự động (39 ngày)
     if (data.sections && Array.isArray(data.sections)) {
@@ -122,13 +130,13 @@ async function run() {
             const childTagId = `${PARENT_TAG}_s${idx + 1}`;
             const displayName = `Soumatome N4 - ${sectionTitle}`;
             const searchKeywords = `soumatome n4, somatome n4, ${sectionTitle}`.toLowerCase();
-            const sortOrder = idx + 1; // Sắp xếp từ 1 đến 39 ngày tương ứng
+            const sortOrder = idx + 1; // Thứ tự sắp xếp từ 1 đến 39 ngày tương ứng
 
             // Đăng ký tag con vào SQL
             metadataSqlStatements.push(`
                 INSERT OR REPLACE INTO thematic_metadata (tag_id, display_name, category, search_keywords, parent_id, sort_order)
                 VALUES ('${childTagId}', '${escapeSQL(displayName)}', 'Giáo trình', '${escapeSQL(searchKeywords)}', '${PARENT_TAG}', ${sortOrder});
-            `.trim().replace(/\s+/g, ' '));
+            `.trim().replace(/\s+/g, ' ');
 
             // Lưu vết các từ thuộc phân đoạn này để gán nhãn ở Giai đoạn 3
             if (item.words && Array.isArray(item.words)) {
